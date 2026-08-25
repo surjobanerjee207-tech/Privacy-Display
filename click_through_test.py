@@ -29,26 +29,43 @@ raw_hwnd = root.winfo_id()
 root_hwnd = ctypes.windll.user32.GetAncestor(raw_hwnd, GA_ROOT)
 hwnd = root_hwnd if root_hwnd else raw_hwnd
 
+# Try to load the 64-bit or 32-bit versions of the functions
+try:
+    GetWindowLong = ctypes.windll.user32.GetWindowLongPtrW
+    GetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    GetWindowLong.restype = ctypes.c_void_p
+    
+    SetWindowLong = ctypes.windll.user32.SetWindowLongPtrW
+    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    SetWindowLong.restype = ctypes.c_void_p
+except AttributeError:
+    GetWindowLong = ctypes.windll.user32.GetWindowLongW
+    GetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    GetWindowLong.restype = ctypes.c_long
+    
+    SetWindowLong = ctypes.windll.user32.SetWindowLongW
+    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+    SetWindowLong.restype = ctypes.c_long
+
 print(f"raw winfo_id(): {raw_hwnd}")
 print(f"resolved root hwnd: {root_hwnd}")
 print(f"using hwnd: {hwnd}")
+print(f"label hwnd: {label.winfo_id()}")
 
-style_before = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-print(f"style before: {style_before:#010x}")
+# List of all HWNDs to make click-through
+hwnds_to_style = [hwnd, raw_hwnd, label.winfo_id()]
 
-new_style = style_before | WS_EX_LAYERED | WS_EX_TRANSPARENT
-result = ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
-print(f"SetWindowLongW result: {result}")
+for h in hwnds_to_style:
+    style_before = GetWindowLong(h, GWL_EXSTYLE)
+    style_before_val = int(style_before) if style_before is not None else 0
+    new_style = style_before_val | WS_EX_LAYERED | WS_EX_TRANSPARENT
+    SetWindowLong(h, GWL_EXSTYLE, new_style)
+    ctypes.windll.user32.SetWindowPos(
+        h, 0, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    )
 
-ctypes.windll.user32.SetWindowPos(
-    hwnd, 0, 0, 0, 0, 0,
-    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
-)
-
-style_after = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-print(f"style after:  {style_after:#010x}")
-print(f"transparent bit set: {bool(style_after & WS_EX_TRANSPARENT)}")
-print()
+print("Styles applied to all window handles.")
 print("Try clicking on your desktop / another app right now.")
 print("If it responds, click-through is working.")
 print("Press ESC in this window's console focus, or Ctrl+C here, to quit.")

@@ -23,6 +23,25 @@ SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 
 
+# Try to load the 64-bit or 32-bit versions of the functions
+try:
+    GetWindowLong = ctypes.windll.user32.GetWindowLongPtrW
+    GetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    GetWindowLong.restype = ctypes.c_void_p
+    
+    SetWindowLong = ctypes.windll.user32.SetWindowLongPtrW
+    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    SetWindowLong.restype = ctypes.c_void_p
+except AttributeError:
+    GetWindowLong = ctypes.windll.user32.GetWindowLongW
+    GetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    GetWindowLong.restype = ctypes.c_long
+    
+    SetWindowLong = ctypes.windll.user32.SetWindowLongW
+    SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+    SetWindowLong.restype = ctypes.c_long
+
+
 def get_root_hwnd(tk_hwnd):
     """
     On Windows, Tkinter's winfo_id() for a Toplevel can return a *child*
@@ -39,32 +58,44 @@ def get_root_hwnd(tk_hwnd):
         return tk_hwnd
 
 
-def set_window_click_through(tk_hwnd, enabled=True):
+def set_window_click_through(window, enabled=True):
     """
     Toggles click-through on a Tkinter window. When enabled, all mouse
     events pass straight through to the window(s) below it instead of
     being captured — the window is still visible, just not interactive.
     """
     try:
+        tk_hwnd = window.winfo_id()
         hwnd = get_root_hwnd(tk_hwnd)
-        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        if enabled:
-            new_style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT
-        else:
-            new_style = (style | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
-        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
-
-        # Force Windows to immediately re-evaluate the window's styles
-        # rather than waiting for some other event to trigger it.
-        ctypes.windll.user32.SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
-        )
-
-        applied = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        is_transparent = bool(applied & WS_EX_TRANSPARENT)
-        print(f"[ClickThrough] hwnd={hwnd} enabled={enabled} "
-              f"transparent_bit_set={is_transparent}")
+        
+        # Collect top-level and all child widget handles recursively to ensure
+        # no nested canvas or label blocks mouse hit-testing.
+        hwnds = [hwnd, tk_hwnd]
+        for child in window.winfo_children():
+            try:
+                hwnds.append(child.winfo_id())
+            except Exception:
+                pass
+                
+        for h in hwnds:
+            style = GetWindowLong(h, GWL_EXSTYLE)
+            style_val = int(style) if style is not None else 0
+            if enabled:
+                new_style = style_val | WS_EX_LAYERED | WS_EX_TRANSPARENT
+            else:
+                new_style = (style_val | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
+            SetWindowLong(h, GWL_EXSTYLE, new_style)
+            
+            # Force Windows to immediately re-evaluate the window's styles
+            ctypes.windll.user32.SetWindowPos(
+                h, 0, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+            )
+            
+            applied = GetWindowLong(h, GWL_EXSTYLE)
+            applied_val = int(applied) if applied is not None else 0
+            is_transparent = bool(applied_val & WS_EX_TRANSPARENT)
+            print(f"[ClickThrough] hwnd={h} enabled={enabled} transparent_bit_set={is_transparent}")
     except Exception as e:
         print("Failed to set click-through window style:", e)
 
@@ -334,8 +365,7 @@ class AcerPrivacyGuardApp(tk.Tk):
         # privacy mode is on. Must run after the window is realized so
         # winfo_id() returns a valid HWND.
         self.overlay_window.update_idletasks()
-        hwnd = self.overlay_window.winfo_id()
-        set_window_click_through(hwnd, enabled=True)
+        set_window_click_through(self.overlay_window, enabled=True)
 
     def apply_privacy_filter_overlay(self):
         """
