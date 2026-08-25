@@ -68,34 +68,27 @@ def set_window_click_through(window, enabled=True):
         tk_hwnd = window.winfo_id()
         hwnd = get_root_hwnd(tk_hwnd)
         
-        # Collect top-level and all child widget handles recursively to ensure
-        # no nested canvas or label blocks mouse hit-testing.
-        hwnds = [hwnd, tk_hwnd]
-        for child in window.winfo_children():
-            try:
-                hwnds.append(child.winfo_id())
-            except Exception:
-                pass
-                
-        for h in hwnds:
-            style = GetWindowLong(h, GWL_EXSTYLE)
-            style_val = int(style) if style is not None else 0
-            if enabled:
-                new_style = style_val | WS_EX_LAYERED | WS_EX_TRANSPARENT
-            else:
-                new_style = (style_val | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
-            SetWindowLong(h, GWL_EXSTYLE, new_style)
-            
-            # Force Windows to immediately re-evaluate the window's styles
-            ctypes.windll.user32.SetWindowPos(
-                h, 0, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
-            )
-            
-            applied = GetWindowLong(h, GWL_EXSTYLE)
-            applied_val = int(applied) if applied is not None else 0
-            is_transparent = bool(applied_val & WS_EX_TRANSPARENT)
-            print(f"[ClickThrough] hwnd={h} enabled={enabled} transparent_bit_set={is_transparent}")
+        # Apply style ONLY to the resolved root top-level window handle.
+        # Setting WS_EX_LAYERED on Tkinter child widgets/HWNDs corrupts
+        # their GDI/DWM paint cycle and turns them completely black.
+        style = GetWindowLong(hwnd, GWL_EXSTYLE)
+        style_val = int(style) if style is not None else 0
+        if enabled:
+            new_style = style_val | WS_EX_LAYERED | WS_EX_TRANSPARENT
+        else:
+            new_style = (style_val | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
+        SetWindowLong(hwnd, GWL_EXSTYLE, new_style)
+        
+        # Force Windows to immediately re-evaluate the window's styles
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        )
+        
+        applied = GetWindowLong(hwnd, GWL_EXSTYLE)
+        applied_val = int(applied) if applied is not None else 0
+        is_transparent = bool(applied_val & WS_EX_TRANSPARENT)
+        print(f"[ClickThrough] hwnd={hwnd} enabled={enabled} transparent_bit_set={is_transparent}")
     except Exception as e:
         print("Failed to set click-through window style:", e)
 
