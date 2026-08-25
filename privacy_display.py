@@ -186,7 +186,7 @@ class AcerPrivacyGuardApp(tk.Tk):
         # Application State
         self.privacy_mode = False  # True = overlay showing, False = overlay hidden
         self.selected_effect = tk.StringVar(value="Privacy Filter (Center Clear)")
-        self.shortcut_str = tk.StringVar(value="Ctrl+Shift+P")
+        self.shortcut_str = tk.StringVar(value="spacebar+b")
 
         # Color Theme
         self.bg_color = "#121212"
