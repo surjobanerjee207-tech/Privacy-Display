@@ -3,6 +3,32 @@ from tkinter import ttk
 from PIL import Image, ImageFilter, ImageTk, ImageGrab
 from pynput import keyboard
 import numpy as np
+import ctypes
+
+# Windows extended window style constants, used to make the fullscreen
+# overlay "click-through" so mouse input passes to whatever app is
+# actually underneath it, while the blurred image still displays.
+GWL_EXSTYLE = -20
+WS_EX_LAYERED = 0x00080000
+WS_EX_TRANSPARENT = 0x00000020
+
+
+def set_window_click_through(hwnd, enabled=True):
+    """
+    Toggles click-through on a Windows window handle. When enabled,
+    all mouse events pass straight through to the window(s) below it
+    instead of being captured — the window is still visible, just not
+    interactive.
+    """
+    try:
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if enabled:
+            new_style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+        else:
+            new_style = (style | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
+    except Exception as e:
+        print("Failed to set click-through window style:", e)
 
 def parse_shortcut_to_pynput(shortcut_str):
     """
@@ -107,7 +133,7 @@ class FloatingButton(tk.Toplevel):
         self.lift()
 
 
-class PrivacyGuardApp(tk.Tk):
+class AcerPrivacyGuardApp(tk.Tk):
     """
     Manual-only privacy screen, similar to Samsung's "Privacy Display" feature:
     a single button (or shortcut) turns the privacy overlay ON or OFF.
@@ -264,6 +290,15 @@ class PrivacyGuardApp(tk.Tk):
         if hasattr(self, "floating_btn") and self.floating_btn is not None:
             self.floating_btn.lift()
 
+        # Make the overlay click-through: it stays visible (blurred image,
+        # tint, etc.) but all mouse input passes straight to whatever app
+        # is actually underneath, so apps keep working normally while
+        # privacy mode is on. Must run after the window is realized so
+        # winfo_id() returns a valid HWND.
+        self.overlay_window.update_idletasks()
+        hwnd = self.overlay_window.winfo_id()
+        set_window_click_through(hwnd, enabled=True)
+
     def apply_privacy_filter_overlay(self):
         """
         Simulates a physical privacy screen filter: the center of the
@@ -411,5 +446,5 @@ class PrivacyGuardApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = PrivacyGuardApp()
+    app = AcerPrivacyGuardApp()
     app.mainloop()
