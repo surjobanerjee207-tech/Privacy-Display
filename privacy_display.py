@@ -13,20 +13,58 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020
 
 
-def set_window_click_through(hwnd, enabled=True):
+# Extra constants needed to force Windows to re-apply the style change
+# immediately, and to resolve the true top-level window handle.
+GA_ROOT = 2
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+
+
+def get_root_hwnd(tk_hwnd):
     """
-    Toggles click-through on a Windows window handle. When enabled,
-    all mouse events pass straight through to the window(s) below it
-    instead of being captured — the window is still visible, just not
-    interactive.
+    On Windows, Tkinter's winfo_id() for a Toplevel can return a *child*
+    HWND rather than the actual top-level window the OS manages —
+    especially with overrideredirect windows. Applying extended window
+    styles (like click-through) to the wrong handle silently does
+    nothing. GetAncestor(..., GA_ROOT) reliably resolves the true
+    top-level window regardless of this nesting.
     """
     try:
+        root = ctypes.windll.user32.GetAncestor(tk_hwnd, GA_ROOT)
+        return root if root else tk_hwnd
+    except Exception:
+        return tk_hwnd
+
+
+def set_window_click_through(tk_hwnd, enabled=True):
+    """
+    Toggles click-through on a Tkinter window. When enabled, all mouse
+    events pass straight through to the window(s) below it instead of
+    being captured — the window is still visible, just not interactive.
+    """
+    try:
+        hwnd = get_root_hwnd(tk_hwnd)
         style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if enabled:
             new_style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT
         else:
             new_style = (style | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
+
+        # Force Windows to immediately re-evaluate the window's styles
+        # rather than waiting for some other event to trigger it.
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        )
+
+        applied = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        is_transparent = bool(applied & WS_EX_TRANSPARENT)
+        print(f"[ClickThrough] hwnd={hwnd} enabled={enabled} "
+              f"transparent_bit_set={is_transparent}")
     except Exception as e:
         print("Failed to set click-through window style:", e)
 
@@ -148,7 +186,7 @@ class AcerPrivacyGuardApp(tk.Tk):
         # Application State
         self.privacy_mode = False  # True = overlay showing, False = overlay hidden
         self.selected_effect = tk.StringVar(value="Privacy Filter (Center Clear)")
-        self.shortcut_str = tk.StringVar(value="spacebar+b")
+        self.shortcut_str = tk.StringVar(value="Ctrl+Shift+P")
 
         # Color Theme
         self.bg_color = "#121212"
