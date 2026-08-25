@@ -107,7 +107,7 @@ class FloatingButton(tk.Toplevel):
         self.lift()
 
 
-class AcerPrivacyGuardApp(tk.Tk):
+class PrivacyGuardApp(tk.Tk):
     """
     Manual-only privacy screen, similar to Samsung's "Privacy Display" feature:
     a single button (or shortcut) turns the privacy overlay ON or OFF.
@@ -390,5 +390,5 @@ class AcerPrivacyGuardApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = AcerPrivacyGuardApp()
+    app = PrivacyGuardApp()
     app.mainloop()
