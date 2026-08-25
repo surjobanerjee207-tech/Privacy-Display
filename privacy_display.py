@@ -268,8 +268,15 @@ class PrivacyGuardApp(tk.Tk):
         """
         Simulates a physical privacy screen filter: the center of the
         screen stays sharp and fully readable head-on, while content
-        toward the edges is progressively blurred and darkened so it
-        can't be made out from the side / a wider viewing angle.
+        toward the edges is progressively, continuously blurred and
+        darkened so it can't be made out from the side.
+
+        This blends across several precomputed blur levels (not just a
+        single blurred layer cross-faded with the sharp one) using an
+        eased (smoothstep) radial curve, which avoids the "ghosting"
+        double-exposure look and abrupt linear falloff of a simple
+        two-layer composite — giving a genuinely smooth defocus similar
+        to a real depth-of-field / privacy-filter gradient.
         """
         try:
             screen_width = self.overlay_window.winfo_screenwidth()
@@ -278,33 +285,47 @@ class PrivacyGuardApp(tk.Tk):
             screenshot = ImageGrab.grab()
             screenshot = screenshot.resize((screen_width, screen_height), Image.Resampling.LANCZOS).convert("RGBA")
 
-            # Moderately obscured version used toward the edges: soft blur,
-            # light dark tint. Kept gentle on purpose — a heavy blur/tint
-            # combo turns already-dark backgrounds (dark wallpapers, dark
-            # theme apps) into a flat black void instead of a visible fade.
-            obscured = screenshot.filter(ImageFilter.GaussianBlur(radius=18))
-            dark_layer = Image.new("RGBA", obscured.size, "#000000")
-            dark_layer.putalpha(70)  # ~27% dark tint at the very edge
-            obscured = Image.alpha_composite(obscured, dark_layer)
+            # Precompute a stack of increasing blur levels. Blending
+            # continuously between neighboring levels (instead of just
+            # "sharp" and "one blurred version") is what makes the
+            # transition read as a smooth defocus rather than a fade.
+            blur_radii = [0, 5, 10, 16, 22, 28]
+            layers = [screenshot if r == 0 else screenshot.filter(ImageFilter.GaussianBlur(radius=r))
+                      for r in blur_radii]
+            stack = np.stack([np.array(im, dtype=np.float32) for im in layers], axis=0)  # (L, H, W, 4)
+            num_levels = len(blur_radii)
 
-            # Build a radial gradient mask: 0 (fully clear) in the center,
-            # ramping up to 255 (obscured) toward the outer edge.
             h, w = screen_height, screen_width
             y, x = np.ogrid[0:h, 0:w]
             cx, cy = w / 2.0, h / 2.0
-            # Normalized elliptical distance from center (0 at center, ~1 at edges)
             dist = np.sqrt(((x - cx) / (w / 2.0)) ** 2 + ((y - cy) / (h / 2.0)) ** 2)
 
-            inner_radius = 0.45  # fully clear zone — center ~half the screen
-            outer_radius = 1.05  # gradient reaches full strength only past the corners,
-                                  # so the fade is gradual rather than hitting max blur/dark
-                                  # partway across the visible screen
+            inner_radius = 0.42  # fully clear zone — center roughly half the screen
+            outer_radius = 1.05  # full blur/dark strength only reached past the corners
 
-            mask = (dist - inner_radius) / (outer_radius - inner_radius)
-            mask = np.clip(mask, 0.0, 1.0) * 255
-            mask_img = Image.fromarray(mask.astype(np.uint8), mode="L")
+            t = np.clip((dist - inner_radius) / (outer_radius - inner_radius), 0.0, 1.0)
+            # Smoothstep easing: gentle start, gentle end, instead of a linear ramp
+            eased = t * t * (3 - 2 * t)
 
-            combined = Image.composite(obscured, screenshot, mask_img)
+            # Continuous blur-level index per pixel, blended between its two
+            # nearest precomputed levels
+            level_pos = eased * (num_levels - 1)
+            idx_low = np.clip(np.floor(level_pos).astype(np.int32), 0, num_levels - 2)
+            idx_high = idx_low + 1
+            frac = (level_pos - idx_low)[..., None]  # (H, W, 1) for broadcasting over RGBA
+
+            ii, jj = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+            low_vals = stack[idx_low, ii, jj]
+            high_vals = stack[idx_high, ii, jj]
+            blended = low_vals * (1 - frac) + high_vals * frac
+
+            # Gentle per-pixel dark tint, scaled by the same eased curve —
+            # kept light so already-dark backgrounds don't collapse to pure black
+            max_tint = 60.0
+            tint_alpha = (eased * max_tint)[..., None]
+            blended[..., :3] = blended[..., :3] * (1 - tint_alpha / 255.0)
+
+            combined = Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8), mode="RGBA")
 
             self.overlay_image = ImageTk.PhotoImage(combined)
 
